@@ -4,19 +4,26 @@ services: # Each subkey creates a Docker container (i.e. service)
     build: . # Looks for a Dockerfile in the current dir and build that
     ports:
       - "8000:5000"
-    env_file: .env-blogging
+    environment:
+      FLASK_APP: "blogging.py"
+      FLASK_CONFIG: "docker"
+      DATABASE_URL: "mysql+pymysql://someuser:somepassword@mysql-server/blogging"
     links: # This links subkey ensures mysql will start first before the blogging app
       - mysql:mysql-server
     restart: always
-    image: aldosebastian/blogging
+    image: aldosebastian/smallblog
     container_name: blogging_service
   mysql:
-    image: "mysql/mysql-server:5.7" # Download and use mysql image from Docker website
-    env_file: .env-mysql
+    image: "mysql/mysql-server:5.7"
+    environment:
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+      MYSQL_DATABASE: "blogging"
+      MYSQL_USER: "someuser"
+      MYSQL_PASSWORD: "somepassword"
     restart: always
     ports:
       - "5423:3306"
     volumes:
-      - /home/aldo/bloggingDB/data:/var/lib/mysql # Use persisted data in this volume. Make sure the server has this folder.
+      - /home/someuser/blogsDB/data:/var/lib/mysql # Use persisted data in this volume. Make sure the server has this folder.
     container_name: blogging_service_db
   

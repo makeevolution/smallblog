@@ -1,9 +1,24 @@
 # This is the entry point to starting the whole app
 
-import os, re, sys, click
+import os
+import re
+import sys
+import click
+from flask_migrate import Migrate, upgrade
+from sqlalchemy import create_engine
+from alembic.config import Config
+from alembic import command
+import unittest
+
+from app import create_app, db
+from app.models import Permission, User, Role, Follow, Post
+from app.factories import GenericUser, ModeratorUser, AdminUser
+from app.helpers import MAX_FAKE_POSTS, MAX_FAKE_USERS, create_fake_users, create_fake_posts
+from config import config
 
 # Find the current configuration to be used for the system
 usedConfiguration = os.getenv('FLASK_CONFIG') or 'default'
+PORT = 5000
 
 # Preliminary if statement to turn on test coverage engine, more information in the flask test
 # decorator below.
@@ -23,13 +38,6 @@ if (sys.gettrace() is None and (usedConfiguration in ['testing', 'development', 
         f.write(coverageString)
     COV = coverage.coverage(branch = True, include="app/*")
     COV.start()
-
-# The following import imports from __init__.py of app folder
-from app import create_app, db
-from app.models import Permission, User, Role, Follow, Post
-from app.factories import GenericUser, ModeratorUser, AdminUser
-from flask_migrate import Migrate, upgrade
-from config import config
 
 # Create an instance of an application using a configuration in env var
 app = create_app(usedConfiguration)
@@ -55,11 +63,10 @@ def make_shell_context():
 # app instance, that's where the login_manager, etc. is initialized i.e. is run. When another
 # instance is made (i.e. in setUp of each unit test), this part is not run anymore. The coverage
 # engine won't see any decorators using these login_manager etc. (e.g. @login_required) if we
-# start the engine after the app.create_app() statement below, making the coverage report 
+# start the engine after the app.create_app() statement above, making the coverage report 
 # incorrect.
 @app.cli.command()
 def test():
-    import unittest
     tests = unittest.TestLoader().discover('tests')
     testResult = unittest.TextTestRunner(verbosity=2).run(tests)
     if COV:
@@ -84,23 +91,38 @@ def deploy():
     # Create user roles in the roles table in the database, if not yet configured
     Role.insert_roles()
 
-# My own helper command to update a new sqlite database based on current model of db.
+# My own helper command to generate a new sqlite database based on current model of db, with a corresponding migration folder.
 # Similar to flask db init, but make our own so we don't depend on that framework!
-@app.cli.command("createdatabase")
-@click.argument("dbname", required = True)
-def createdatabase(**kwargs):
-    from sqlalchemy import create_engine
-    engine = app.extensions["migrate"].db.engine
-    engineForNewDB = re.findall("(?<=\()(.*)(?=\\\)", engine.__repr__())[0] + "\\" + kwargs["dbname"] + ".sqlite"
-    engine = create_engine(engineForNewDB)
-    from alembic.config import Config
-    from alembic import command
-
+@app.cli.command("init_sqlite_db")
+@click.argument("db_name", required = True)
+def init_sqlite_db(db_name):
+    engine_for_sqlite = re.findall("(?<=\()(.*)(?=\\\)", app.extensions["migrate"].db.engine.__repr__())[0] + "\\" + db_name + ".sqlite"
+    engine = create_engine(engine_for_sqlite)
     app.extensions["migrate"].db.metadata.create_all(engine)
-    folder = f"{os.getcwd()}/migrations{kwargs.get('dbname')}"
-    alembic_cfg = Config(f"{folder}/alembic.ini", attributes = {"sqlalchemy.url": str(engineForNewDB)})
-    alembic_cfg.set_main_option("sqlalchemy.url", str(engineForNewDB))
+    folder = f"{os.getcwd()}/migrations_{db_name}"
+    alembic_cfg = Config(f"{folder}/alembic.ini", attributes = {"sqlalchemy.url": str(engine_for_sqlite)})
+    alembic_cfg.set_main_option("sqlalchemy.url", str(engine_for_sqlite))
     command.init(alembic_cfg, directory = folder)
 
+@app.cli.command("seed_fake_users")
+@click.argument("count", required = False, default = MAX_FAKE_USERS)
+def seed_fake_users(count):
+    create_fake_users(count)
+
+@app.cli.command("seed_fake_posts")
+@click.argument("count", required = False, default = MAX_FAKE_POSTS)
+def seed_fake_posts(count):
+    create_fake_posts(count)
+
+@app.cli.command("clear_data")
+def clear_data():
+    """Remove all data from all tables in the database."""
+    meta = db.metadata
+    for table in reversed(meta.sorted_tables):
+        print(f"Clearing data from table {table.name}...")
+        db.session.execute(table.delete())
+    db.session.commit()
+    print("All data has been cleared from the database.")
+
 if __name__=="__main__":
-    app.run(port=5000)
+    app.run(port=PORT)
